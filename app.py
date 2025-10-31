@@ -4,9 +4,9 @@ import base64
 import google.generativeai as genai
 import re
 import json
-import sqlite3 # <-- 1. IMPORTED SQLITE
+import sqlite3
+import os
 
-# --- App Configuration ---
 st.set_page_config(
     page_title="DataPath AI Tutor",
     page_icon="📚",
@@ -14,27 +14,23 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- WARNING: Hardcoded API Key for Immediate Launch (As requested) ---
 HARDCODED_API_KEY = "AIzaSyACmRDzniS_OTkEtT39kfVWMSiY5ZBal_U"
 
-# --- AI Model Configuration ---
 model = None
 try:
     genai.configure(api_key=HARDCODED_API_KEY)
-    model = genai.GenerativeModel('gemini-2.0-flash') # Using the requested Flash model
+    model = genai.GenerativeModel('gemini-2.0-flash') 
 except Exception as e:
     st.error(f"AI model initialization failed. Error: {e}")
     model = None
 
-# --- Dark Theme Color Palette ---
 BACKGROUND_COLOR = "#0E1117"
 PRIMARY_TEXT_COLOR = "#FAFAFA"
 SECONDARY_TEXT_COLOR = "#AFB8C1"
 BUTTON_COLOR = "#262730"
 ACCENT_COLOR = "#3C3F4A"
-HEADER_COLOR = "#007BFF" # A bright, visible blue for headers
+HEADER_COLOR = "#007BFF" 
 
-# --- Custom CSS for Dark Theme ---
 st.markdown(f"""
     <style>
         .stApp, .reportview-container {{ background-color: {BACKGROUND_COLOR}; }}
@@ -68,24 +64,25 @@ st.markdown(f"""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Helper Functions ---
+DB_FILE = os.path.join(os.getcwd(), 'datapath.db') 
+
 def get_image_as_base64(path):
     try:
         with open(path, "rb") as image_file: return base64.b64encode(image_file.read()).decode()
     except FileNotFoundError: return None
 
-# --- 2. NEW: DATABASE INITIALIZATION ---
+LOGO_BASE_64 = get_image_as_base64("DataPath_Logo.png")
+LOGO_EMBED_HTML = f'<img src="data:image/png;base64,{LOGO_BASE_64}" style="max-width: 250px; display: block; margin-left: auto; margin-right: auto;">' if LOGO_BASE_64 else ""
+
 def init_db():
-    with sqlite3.connect('datapath.db') as conn:
+    with sqlite3.connect(DB_FILE) as conn:
         cursor = conn.cursor()
-        # Create users table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 username TEXT PRIMARY KEY,
                 password TEXT NOT NULL
             )
         ''')
-        # Create user_progress table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS user_progress (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,9 +93,6 @@ def init_db():
             )
         ''')
         conn.commit()
-
-LOGO_BASE_64 = get_image_as_base64("DataPath_Logo.png")
-LOGO_EMBED_HTML = f'<img src="data:image/png;base64,{LOGO_BASE_64}" style="max-width: 250px; display: block; margin-left: auto; margin-right: auto;">' if LOGO_BASE_64 else ""
 
 def init_session_state():
     if 'page' not in st.session_state: st.session_state.page = 'splash'
@@ -119,13 +113,11 @@ def init_session_state():
         "Advanced Graph Algorithms (Dijkstra's)", "Advanced Graph Algorithms (A* Search)",
         "Disjoint Set Union (DSU) / Union-Find", "Segment Trees", "Bit Manipulation"
     ]
-
-# Run the database setup
+    
 init_db()
-# Initialize session state
+
 init_session_state()
 
-# --- Page Functions ---
 
 def splash_screen():
     if not LOGO_BASE_64: st.warning("`DataPath_Logo.png` not found. Please ensure it is in the same directory as `app.py`.")
@@ -134,7 +126,6 @@ def splash_screen():
     st.session_state.page = 'login'
     st.rerun()
 
-# --- 3. MODIFIED LOGIN PAGE ---
 def login_page():
     st.markdown(f"<h1 style='text-align: center;'>Welcome Back to DataPath</h1>", unsafe_allow_html=True)
     st.markdown(f"<h3 style='text-align: center; color: {SECONDARY_TEXT_COLOR};'>Login to continue your journey</h3>", unsafe_allow_html=True)
@@ -146,7 +137,7 @@ def login_page():
             if not username or not password:
                 st.error("Please enter both username and password.")
             else:
-                with sqlite3.connect('datapath.db') as conn:
+                with sqlite3.connect(DB_FILE) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, password))
                     user = cursor.fetchone()
@@ -163,7 +154,6 @@ def login_page():
         st.session_state.page = 'signup'
         st.rerun()
 
-# --- 4. MODIFIED SIGNUP PAGE ---
 def signup_page():
     if st.button("⬅️ Back to Login", key="back_to_login"):
         st.session_state.page = 'login'
@@ -183,7 +173,7 @@ def signup_page():
                 st.error("Passwords do not match.")
             else:
                 try:
-                    with sqlite3.connect('datapath.db') as conn:
+                    with sqlite3.connect(DB_FILE) as conn:
                         cursor = conn.cursor()
                         cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
                         conn.commit()
@@ -233,7 +223,6 @@ def topic_selection_page():
             st.session_state.page = 'chat_tutor'
             st.rerun()
 
-# --- CONVERSATIONAL TUTOR PAGE (Lesson Page) ---
 def chat_tutor_page():
     if st.button("⬅️ Back to Topics", key="back_to_topics"):
         st.session_state.page = 'topic_selection'
@@ -319,11 +308,21 @@ def chat_tutor_page():
         with st.spinner("DataPath AI is thinking..."):
             if model:
                 try:
+                    system_instruction = (
+                        "You are DataPath, an expert Data Structures tutor. Your job is to provide conversational answers, clarify the content, "
+                        "or explain complex code in simple terms. Your ONLY focus is on Data Structures, Algorithms, or programming logic related to the current topic. "
+                        "If the user asks a question about general knowledge, travel, history, or any topic unrelated to computer science, respond politely by stating, "
+                        "'I am DataPath, a specialist in Data Structures. I can only assist with questions related to computer science and the current lesson.'"
+                    )
+                    
                     history_for_model = [f"Initial Lesson:\n{st.session_state.lesson_bundle}"]
                     for msg in st.session_state.messages:
                         history_for_model.append(f"{msg['role']}: {msg['content']}")
                     
-                    response = model.generate_content("\n".join(history_for_model))
+                    response = model.generate_content(
+                        "\n".join(history_for_model),
+                        system_instruction=system_instruction
+                    )
                     response_text = response.text
                 except Exception as e:
                     response_text = f"Sorry, I encountered an error. Please try again. Error: {e}"
@@ -357,7 +356,6 @@ def leetcode_practice_page():
         st.session_state.quiz_finished = False
         st.rerun()
 
-# --- 5. MODIFIED MCQ TEST PAGE ---
 def mcq_test_page():
     if st.button("⬅️ Back to Practice", key="back_to_practice"):
         st.session_state.page = 'leetcode_practice'
@@ -386,10 +384,8 @@ def mcq_test_page():
         st.balloons()
         score = sum(1 for i, q in enumerate(questions) if st.session_state.user_answers[i] == q["a"])
         st.success(f"Quiz Complete! Your score: {score} / {len(questions)}")
-        
-        # --- SAVE PROGRESS TO DB ---
         try:
-            with sqlite3.connect('datapath.db') as conn:
+            with sqlite3.connect(DB_FILE) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO user_progress (username, topic, score) VALUES (?, ?, ?)",
@@ -422,7 +418,6 @@ def mcq_test_page():
         else:
             if st.button("✨ Submit Quiz"): st.session_state.quiz_finished = True; st.rerun()
 
-# --- Main Page Router ---
 if st.session_state.page == 'splash': 
     splash_screen()
 elif not st.session_state.logged_in:
